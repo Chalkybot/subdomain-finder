@@ -1,54 +1,53 @@
+#!/usr/bin/env python3
+import dns.resolver
 import requests
 import socket
 import json
 import sys
 import re
 
+
+
 class SubDomain:
     def __init__(self, domain, padding):
         self.domain_name = domain
-        self.ip_addresses = self.resolve_domain()
+        self.ip_addresses = dns_request(self.domain_name, "A")
         self.padding = padding
         self.parsed_ips = {}
-
-    def resolve_domain(self):
-        try:
-            # DNS query returning every IP.
-            addr_info = socket.getaddrinfo(self.domain_name, None, socket.AF_INET)
-            ip_addresses = list(set([addr[4][0] for addr in addr_info]))
-        except:
-            ip_addresses = None
-        return ip_addresses
-
+    
     def set_country(self, country_ip_list):
         if self.ip_addresses:
             for ip in self.ip_addresses:
                 self.parsed_ips[ip] = country_ip_list[ip]
 
     def __str__(self):
-        padding = " " * (self.padding - len(self.domain_name) + 1)
-        output_message = f"{self.domain_name}"
+        modified_padding = " " * (self.padding - len(self.domain_name) + 1)
         if not self.parsed_ips:
-            output_message += padding + f"────> {colorize_text('No DNS entry found.', 91)}"
+            output_message = f"[-] {self.domain_name} {modified_padding} ────> {colorize_text('No DNS entry found.', 91)}"
         else:
-            output_message += padding + "────> " + \
-                f"\n{' ' * (self.padding)} ────> ".join(
+            output_message = f"[+] {self.domain_name} {modified_padding} ────> " + \
+                f"\n{' ' * (self.padding + 6)} ────> ".join(
                     f"{colorize_text(ip, 92)}{' ' * (15 - len(ip))} [{details[0]}], {colorize_text(details[1], 93)}"
                     for ip, details in self.parsed_ips.items())
         return output_message
 
 class ParentDomain:
-    def __init__(self, domain, shodan=False): 
+    def __init__(self, domain, shodan=False):
+        print(f"[!] Found nameservers: {', '.join(domain[:-1] for domain in dns_request(domain, 'NS'))}") 
         self.shodan = False
         self.domain_name = domain
         self.subdomains = self.subdomain_search()
+
         # Let's discover child-domains from crt.sh:
         max_length = len(max(self.subdomains, key=len))
+
         # Now, let's create SubDomain objects.
         self.subdomains = [SubDomain(subdomain, max_length) for subdomain in self.subdomains]
         self.sort_subdomains()
+
         # Only unique ips.
         _unique_ips = list(set([ip for ip_block in self.subdomains if ip_block.ip_addresses for ip in ip_block.ip_addresses]))
+
         # Let's geolocate the IPs.
         country_code_list = self.geolocate_ips(_unique_ips)
         
@@ -99,9 +98,16 @@ class ParentDomain:
 
 
 
+def dns_request(domain, record):
+    try:
+        records = dns.resolver.resolve(domain, record)
+        nameservers = [str(record) for record in records]
+        return nameservers
+    except:
+        return None
+
 def colorize_text(text, colour):
     return f"\033[{colour}m{text}\033[0m"
-
 
 def parse_args(arguments):
         url_regex = r'(https?://)?(www\.)?'
@@ -110,7 +116,9 @@ def parse_args(arguments):
 
 def main(args):
     domains = parse_args(args)
-    ParentDomain(domains[0])
+    for domain in domains:
+        print(f"[!] Attempting to query subdomains for {domain}...")
+        ParentDomain(domain)
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
